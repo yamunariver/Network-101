@@ -608,3 +608,165 @@ and the Authenticator (switch) forwards and controls access based on RADIUS resu
 ---
 
 Would you like me to show a packet-level EAPOL Wireshark example (with frame breakdown and explanation)? It’ll help visualize exactly what happens on the wire during Dot1x authentication.
+
+
+
+Excellent 👍 — since your setup uses static IP addresses (no DHCP), let’s go through how to properly configure and handle dot1x + VLANs + static IPs in Cisco switches.
+
+This is a common setup in secure enterprise or industrial environments where devices (like PCs, printers, IP phones, cameras) use fixed IPs.
+
+
+---
+
+🔹 1. What Changes When Using Static IPs
+
+When clients have static IPs:
+
+No DHCP request occurs, so ip helper-address isn’t needed.
+
+The switch still performs 802.1X or MAB authentication before allowing traffic.
+
+VLAN assignment and fallback logic still apply, but IP must match the VLAN.
+
+
+
+---
+
+🔹 2. Key Considerations
+
+Aspect	Description
+
+Static IP inside VLAN	Must belong to that VLAN’s subnet (e.g. VLAN10 = 10.10.10.0/24)
+No IP helper	Not required
+dot1x/MAB still work	Uses EAPOL (L2), not dependent on IP
+Critical VLAN	Should have static addressing plan too
+DNS / Gateway	Must be configured manually on each host
+
+
+
+---
+
+🔹 3. Example Core VLAN Config (Static IP Environment)
+
+! Enable routing
+Switch(config)# ip routing
+
+! VLAN Definitions
+Switch(config)# vlan 10
+Switch(config-vlan)# name DATA_VLAN
+Switch(config-vlan)# exit
+
+Switch(config)# vlan 20
+Switch(config-vlan)# name VOICE_VLAN
+Switch(config-vlan)# exit
+
+Switch(config)# vlan 30
+Switch(config-vlan)# name MGMT_VLAN
+Switch(config-vlan)# exit
+
+Switch(config)# vlan 999
+Switch(config-vlan)# name CRITICAL_VLAN
+Switch(config-vlan)# exit
+
+! VLAN Interfaces (SVIs)
+Switch(config)# interface vlan 10
+Switch(config-if)# ip address 10.10.10.1 255.255.255.0
+Switch(config-if)# description DATA VLAN SVI
+Switch(config-if)# no shutdown
+Switch(config-if)# exit
+
+Switch(config)# interface vlan 20
+Switch(config-if)# ip address 10.10.20.1 255.255.255.0
+Switch(config-if)# description VOICE VLAN SVI
+Switch(config-if)# no shutdown
+Switch(config-if)# exit
+
+Switch(config)# interface vlan 999
+Switch(config-if)# ip address 10.10.99.1 255.255.255.0
+Switch(config-if)# description CRITICAL VLAN SVI
+Switch(config-if)# no shutdown
+Switch(config-if)# exit
+
+
+---
+
+🔹 4. Access Port + dot1x Configuration (for Static IP Devices)
+
+Switch(config)# interface GigabitEthernet1/0/10
+Switch(config-if)# switchport mode access
+Switch(config-if)# switchport access vlan 10
+Switch(config-if)# switchport voice vlan 20
+Switch(config-if)# authentication port-control auto
+Switch(config-if)# mab
+Switch(config-if)# dot1x pae authenticator
+Switch(config-if)# authentication event server-dead action authorize vlan 999
+Switch(config-if)# authentication event server-alive action reinitialize
+Switch(config-if)# authentication order mab dot1x
+Switch(config-if)# authentication priority dot1x mab
+Switch(config-if)# authentication host-mode single-host
+Switch(config-if)# spanning-tree portfast
+Switch(config-if)# no shutdown
+
+
+---
+
+🔹 5. Static IP Assignment on End Device
+
+For example, on a PC in VLAN 10:
+
+Setting	Value
+
+IP address	10.10.10.25
+Subnet mask	255.255.255.0
+Default gateway	10.10.10.1
+DNS server	10.10.30.10 (or any internal DNS)
+
+
+⚠️ Important: If RADIUS is down and the switch moves the port to VLAN 999 (Critical VLAN), the device’s static IP (10.10.10.25) won’t match VLAN 999 (10.10.99.x). It will lose network access.
+
+
+---
+
+🔹 6. How to Handle RADIUS Down with Static IPs
+
+If RADIUS might go down occasionally:
+
+Avoid using authentication event server-dead action authorize vlan 999
+
+Instead, use fail-open so devices stay connected in their current VLAN:
+
+
+Switch(config-if)# authentication event fail action authorize
+
+✅ This keeps the port authorized even if RADIUS is unreachable.
+No VLAN change happens → static IP continues working.
+
+
+---
+
+🔹 7. Verification Commands
+
+show authentication sessions interface gi1/0/10 details
+show dot1x interface gi1/0/10 detail
+show radius statistics
+show logging | include RADIUS
+
+
+---
+
+🔹 Summary
+
+Feature	With Static IP
+
+DHCP / Helper	❌ Not used
+dot1x / MAB	✅ Works normally (Layer 2)
+Critical VLAN	⚠️ Avoid if using static IPs
+Fallback (server dead)	✅ Use fail action authorize
+IP Gateway	Must be manually set per VLAN
+
+
+
+---
+
+Would you like me to show a best-practice configuration for static IP networks using dot1x + MAB with secure fallback (so users stay connected if RADIUS fails)?
+It’s a clean design many Cisco engineers use in enterprise LANs.
